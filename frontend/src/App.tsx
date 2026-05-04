@@ -1,10 +1,14 @@
 import './App.css';
-import { Editor } from './components/Editor';
+import { Header } from './components/Header';
+import { Editor } from './features/Editor';
 
 function App() {
   return (
     <>
-      <Editor />
+      <div className="bg-slate-50 min-h-screen flex flex-col font-sans text-slate-800">
+        <Header />
+        <Editor />
+      </div>
     </>
   );
 }
