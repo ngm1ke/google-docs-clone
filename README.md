@@ -2,5 +2,5 @@
 
 ## Tech Stack
 
-- **Frontend:** React, Quill
-- **Backend:** ShareDB
+- **Frontend:** React
+- **Backend:** NestJs
