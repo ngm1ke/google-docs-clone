@@ -48,65 +48,132 @@ export const Editor = () => {
     const currentCursor = textarea.selectionStart;
     const inputType = nativeEvent.inputType;
     const oldText = oldTextRef.current;
+
+    const { start: startSelection, end: endSelection } =
+      selectionBeforeChange.current;
+    const isSelection = startSelection != endSelection;
+    const deletedTextWhenSelection = oldText.slice(
+      startSelection,
+      endSelection,
+    );
+    
     console.log({
       newValue: newText,
       currentCursor,
       inputType,
       oldText,
+      isSelection,
+      deletedTextWhenSelection,
     });
     let op: OTOperation[] = [];
     switch (inputType) {
       case 'insertText': {
         const addedText = newText.charAt(currentCursor - 1);
-        // TODO: handle selection
-        op = [
-          {
-            type: 'insert',
-            position: currentCursor - 1,
-            text: addedText,
-          },
-        ];
+        if (isSelection) {
+          op = [
+            {
+              type: 'delete',
+              position: startSelection,
+              length: endSelection - startSelection,
+            },
+            {
+              type: 'insert',
+              position: currentCursor - 1,
+              text: addedText,
+            },
+          ];
+        } else {
+          op = [
+            {
+              type: 'insert',
+              position: currentCursor - 1,
+              text: addedText,
+            },
+          ];
+        }
+
         break;
       }
       case 'insertLineBreak': {
         const addedText = newText.charAt(currentCursor - 1);
-        op = [
-          {
-            type: 'insert',
-            position: currentCursor - 1,
-            text: addedText,
-          },
-        ];
+        if (isSelection) {
+          op = [
+            {
+              type: 'delete',
+              position: startSelection,
+              length: endSelection - startSelection,
+            },
+            {
+              type: 'insert',
+              position: currentCursor - 1,
+              text: addedText,
+            },
+          ];
+        } else {
+          op = [
+            {
+              type: 'insert',
+              position: currentCursor - 1,
+              text: addedText,
+            },
+          ];
+        }
         break;
       }
       case 'insertFromPaste': {
-        // TODO: handle selection
         const addedLength = newText.length - oldText.length;
         const addedText = newText.slice(
           currentCursor - addedLength,
           currentCursor,
         );
-        op = [
-          {
-            type: 'insert',
-            position: currentCursor - addedLength,
-            text: addedText,
-          },
-        ];
+        if (isSelection) {
+          op = [
+            {
+              type: 'delete',
+              position: startSelection,
+              length: endSelection - startSelection,
+            },
+            {
+              type: 'insert',
+              position: currentCursor - addedLength,
+              text: addedText,
+            },
+          ];
+        } else {
+          op = [
+            {
+              type: 'insert',
+              position: currentCursor - addedLength,
+              text: addedText,
+            },
+          ];
+        }
+
         break;
       }
       case 'deleteContentBackward': {
-        // TODO: handle selection
-        op = [
-          {
-            type: 'delete',
-            position: currentCursor + 1,
-            length: 1,
-          },
-        ];
+        if (isSelection) {
+          op = [
+            {
+              type: 'delete',
+              position: startSelection,
+              length: endSelection - startSelection,
+            },
+          ];
+        } else {
+          op = [
+            {
+              type: 'delete',
+              position: currentCursor + 1,
+              length: 1,
+            },
+          ];
+        }
+
         break;
       }
       case 'historyUndo': {
+        window.alert(inputType + ' is not supported');
         break;
       }
       default:
@@ -148,7 +215,7 @@ export const Editor = () => {
           <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center">
               <span className="h-2 w-2 rounded-full bg-blue-500 mr-2 animate-pulse" />
-              OT Operations (Normal)
+              OT Operations
             </h2>
           </div>
 
