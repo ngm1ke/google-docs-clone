@@ -14,3 +14,33 @@ export const getInitials = (name: string) => {
   }
   return name.substring(0, 2).toUpperCase();
 };
+
+export const generateSession = () => {
+  const animals = [
+    'Panda',
+    'Koala',
+    'Fox',
+    'Rabbit',
+    'Otter',
+    'Sloth',
+    'Tiger',
+    'Penguin',
+  ];
+  const colors = [
+    'Happy',
+    'Clever',
+    'Swift',
+    'Bright',
+    'Cozy',
+    'Jolly',
+    'Calm',
+    'Silly',
+  ];
+  const randomColor = colors[Math.floor(Math.random() * colors.length)];
+  const randomAnimal = animals[Math.floor(Math.random() * animals.length)];
+
+  return {
+    clientId: 'client_' + Math.random().toString(36).substr(2, 9),
+    username: `${randomColor} ${randomAnimal}`,
+  };
+};

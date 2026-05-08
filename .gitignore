@@ -1,0 +1,4 @@
+.env
+node_modues/
+dist/
+build/.env

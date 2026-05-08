@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
+import { useSocket } from '../hooks/useSocket';
 
 // Define the normal operation structures
 export interface InsertOperation {
@@ -24,6 +25,7 @@ interface LoggedOperation {
 }
 
 export const Editor = () => {
+  useSocket();
   const [text, setText] = useState('');
   const [opHistories, setOpHistories] = useState<LoggedOperation[]>([]);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);

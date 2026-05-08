@@ -1,9 +1,9 @@
-import type { UserPresence } from '../types';
+import { useSocket } from '../hooks/useSocket';
 import { getAvatarColor } from '../utils';
 
 export const Sidebar = () => {
-  const presences: UserPresence[] = [];
-  const clientId = '1';
+  const { presences, session } = useSocket();
+  const { clientId } = session || {};
   return (
     <>
       <aside className="w-80 bg-white border-r border-slate-200 p-6 flex flex-col justify-between hidden lg:flex">

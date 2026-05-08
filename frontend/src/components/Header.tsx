@@ -1,7 +1,8 @@
+import { useSocket } from '../hooks/useSocket';
+
 export const Header = () => {
-  const username = '';
-  const isConnected = true;
-  const revision = 10;
+  const { document, isConnected } = useSocket();
+  const revision = document?.revision || 0;
   return (
     <>
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm sticky top-0 z-50">
@@ -38,17 +39,6 @@ export const Header = () => {
                 Rev {revision}
               </span>
             </div>
-          </div>
-        </div>
-
-        <div className="flex items-center space-x-6">
-          <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 shadow-inner">
-            <span className="text-xs text-slate-400 mr-2 uppercase tracking-wider font-bold">
-              Your Nickname:
-            </span>
-            <span className="bg-transparent border-none text-sm font-semibold focus:outline-none text-slate-800 w-36">
-              {username}
-            </span>
           </div>
         </div>
       </header>
