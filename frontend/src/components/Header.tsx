@@ -1,8 +1,7 @@
 import { useSocket } from '../hooks/useSocket';
 
 export const Header = () => {
-  const { document, isConnected } = useSocket();
-  const revision = document?.revision || 0;
+  const { isConnected } = useSocket();
   return (
     <>
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between shadow-sm sticky top-0 z-50">
@@ -25,7 +24,7 @@ export const Header = () => {
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-tight text-slate-900">
-              Collaborative OT Document
+              Simple Google Docs
             </h1>
             <div className="flex items-center space-x-2 text-xs">
               <span
@@ -33,10 +32,6 @@ export const Header = () => {
               />
               <span className="text-slate-500 font-medium">
                 {isConnected ? 'Connected' : 'Disconnected'}
-              </span>
-              <span className="text-slate-300">•</span>
-              <span className="text-slate-500 font-semibold bg-slate-100 px-2 py-0.5 rounded">
-                Rev {revision}
               </span>
             </div>
           </div>

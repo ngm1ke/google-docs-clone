@@ -34,9 +34,6 @@ export const Sidebar = () => {
                         <span className="text-blue-500 font-bold">(You)</span>
                       )}
                     </p>
-                    <p className="text-xs text-slate-400 font-mono">
-                      Cursor: {user.position}
-                    </p>
                   </div>
                 </div>
               );

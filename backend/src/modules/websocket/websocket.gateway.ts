@@ -9,12 +9,11 @@ import {
 } from '@nestjs/websockets';
 import { Server, WebSocket } from 'ws';
 import { PresenceService } from './presence.service';
-import { UsePipes, ValidationPipe } from '@nestjs/common';
 import type { OperationMessage } from './types';
 import { DocumentService } from './document.service';
+import { transformLists } from './ot';
 
 @WebSocketGateway({ path: '/ws' })
-// @UsePipes(new ValidationPipe({ whitelist: true }))
 export class WebsocketGateway
   implements OnGatewayConnection, OnGatewayDisconnect
 {
@@ -53,11 +52,48 @@ export class WebsocketGateway
     @ConnectedSocket() client: WebSocket,
     @MessageBody() data: OperationMessage,
   ) {
-    // TODO: validate operation
     console.log('Received operation:', data);
+    const { version, operations, clientId } = data;
 
-    // this.broadcast('operation', data, client);
-    // TODO:
+    // Transform incoming operations
+    let transformedOps = [...operations];
+    const concurrentHistory = this.documentService.getHistorySince(version);
+
+    for (const historyItem of concurrentHistory) {
+      if (historyItem.clientId === clientId) {
+        continue;
+      }
+      [transformedOps] = transformLists(
+        transformedOps,
+        historyItem.operations,
+        clientId,
+        historyItem.clientId,
+      );
+    }
+
+    this.documentService.applyOperations(transformedOps);
+    const newVersion = this.documentService.incrementRevision();
+
+    this.documentService.addHistory(newVersion, transformedOps, clientId);
+
+    client.send(
+      JSON.stringify({
+        event: 'ack',
+        data: {
+          version: newVersion,
+        },
+      }),
+    );
+
+    this.broadcast(
+      'operation',
+      {
+        version: newVersion,
+        operations: transformedOps,
+        clientId,
+      },
+      client,
+    );
   }
 
   @SubscribeMessage('presence')
@@ -80,7 +116,7 @@ export class WebsocketGateway
     this.broadcast('presenceList', this.presenceService.getAllPresences());
   }
 
-  private broadcast(event: string, data: any, excludeSocket?: WebSocket) {
+  private broadcast(event: string, data: unknown, excludeSocket?: WebSocket) {
     const payload = JSON.stringify({ event, data });
     this.server.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN && client !== excludeSocket) {

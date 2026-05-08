@@ -14,5 +14,6 @@ export type OTOperation = InsertOperation | DeleteOperation;
 
 export interface OperationMessage {
   version: number;
-  operation: OTOperation;
+  operations: OTOperation[];
+  clientId: string;
 }

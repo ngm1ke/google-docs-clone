@@ -1,21 +1,14 @@
 import { useRef, useState, useEffect } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { useSocket } from '../hooks/useSocket';
-
-// Define the normal operation structures
-export interface InsertOperation {
-  type: 'insert';
-  position: number;
-  text: string;
-}
-
-export interface DeleteOperation {
-  type: 'delete';
-  position: number;
-  length: number;
-}
-
-export type OTOperation = InsertOperation | DeleteOperation;
+import type { OTOperation } from '../types';
+import {
+  applyAll,
+  transformLists,
+  adjustCursor,
+  getCaretCoordinates,
+} from '../utils/ot';
+import { getAvatarColor } from '../utils';
 
 interface LoggedOperation {
   id: string;
@@ -25,14 +18,158 @@ interface LoggedOperation {
 }
 
 export const Editor = () => {
-  useSocket();
-  const [text, setText] = useState('');
+  const {
+    sendOp,
+    setOnOpReceived,
+    setOnAckReceived,
+    document,
+    session,
+    updatePresence,
+    presences,
+    text,
+    setText,
+  } = useSocket();
   const [opHistories, setOpHistories] = useState<LoggedOperation[]>([]);
   const textareaRef = useRef<null | HTMLTextAreaElement>(null);
-  const oldTextRef = useRef<string>('');
+  const oldContentRef = useRef<string>('');
+
+  const initializedRef = useRef(false);
+
+  const revisionRef = useRef<number>(0);
+  const outstandingRef = useRef<OTOperation[] | null>(null);
+  const bufferRef = useRef<OTOperation[] | null>(null);
+
+  const [remoteCursors, setRemoteCursors] = useState<
+    {
+      clientId: string;
+      username: string;
+      top: number;
+      left: number;
+      color: string;
+    }[]
+  >([]);
+
+  const updateRemoteCursorCoordinates = () => {
+    const textarea = textareaRef.current;
+    if (!textarea || !session) return;
+
+    const coords = presences
+      .filter((p) => p.clientId !== session.clientId)
+      .map((p) => {
+        const pos = Math.max(0, Math.min(p.position, textarea.value.length));
+        try {
+          const { top, left } = getCaretCoordinates(textarea, pos);
+          return {
+            clientId: p.clientId,
+            username: p.username,
+            top,
+            left,
+            color: getAvatarColor(p.clientId),
+          };
+        } catch (e) {
+          console.error('Error computing cursor:', e);
+          return null;
+        }
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
+
+    setRemoteCursors(coords);
+  };
+
+  useEffect(() => {
+    updateRemoteCursorCoordinates();
+  }, [presences, text]);
+
+  useEffect(() => {
+    if (document && !initializedRef.current) {
+      oldContentRef.current = document.content;
+      revisionRef.current = document.revision;
+      initializedRef.current = true;
+    }
+  }, [document]);
+
+  useEffect(() => {
+    window.addEventListener('resize', updateRemoteCursorCoordinates);
+    return () => {
+      window.removeEventListener('resize', updateRemoteCursorCoordinates);
+    };
+  }, [presences, text]);
 
   // Store selection state before change occurs
   const selectionBeforeChange = useRef({ start: 0, end: 0 });
+
+  useEffect(() => {
+    if (!session) return;
+
+    setOnAckReceived((data) => {
+      console.log('Received ACK for version:', data.version);
+      revisionRef.current = data.version;
+      outstandingRef.current = null;
+
+      if (bufferRef.current) {
+        outstandingRef.current = bufferRef.current;
+        bufferRef.current = null;
+        sendOp(revisionRef.current, outstandingRef.current);
+      }
+    });
+
+    setOnOpReceived((data) => {
+      if (data.clientId === session.clientId) {
+        return;
+      }
+
+      console.log('Received remote operation:', data);
+
+      let transformedRemote = [...data.operations];
+
+      if (outstandingRef.current) {
+        const [tRemote, tOutstanding] = transformLists(
+          transformedRemote,
+          outstandingRef.current,
+          data.clientId,
+          session.clientId,
+        );
+        transformedRemote = tRemote;
+        outstandingRef.current = tOutstanding;
+      }
+
+      if (bufferRef.current) {
+        const [tRemote, tBuffer] = transformLists(
+          transformedRemote,
+          bufferRef.current,
+          data.clientId,
+          session.clientId,
+        );
+        transformedRemote = tRemote;
+        bufferRef.current = tBuffer;
+      }
+
+      const textarea = textareaRef.current;
+      if (textarea) {
+        const cursorStart = textarea.selectionStart;
+        const cursorEnd = textarea.selectionEnd;
+
+        const newText = applyAll(oldContentRef.current, transformedRemote);
+        const newCursorStart = adjustCursor(cursorStart, transformedRemote);
+        const newCursorEnd = adjustCursor(cursorEnd, transformedRemote);
+
+        setText(newText);
+        oldContentRef.current = newText;
+        textarea.setSelectionRange(newCursorStart, newCursorEnd);
+      } else {
+        const newText = applyAll(oldContentRef.current, transformedRemote);
+        setText(newText);
+        oldContentRef.current = newText;
+      }
+
+      revisionRef.current = data.version;
+    });
+
+    return () => {
+      setOnAckReceived(null);
+      setOnOpReceived(null);
+    };
+  }, [session, setOnAckReceived, setOnOpReceived, sendOp]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const textarea = e.currentTarget;
@@ -49,7 +186,7 @@ export const Editor = () => {
     const newText = textarea.value;
     const currentCursor = textarea.selectionStart;
     const inputType = nativeEvent.inputType;
-    const oldText = oldTextRef.current;
+    const oldText = oldContentRef.current;
 
     const { start: startSelection, end: endSelection } =
       selectionBeforeChange.current;
@@ -58,7 +195,7 @@ export const Editor = () => {
       startSelection,
       endSelection,
     );
-    
+
     console.log({
       newValue: newText,
       currentCursor,
@@ -182,9 +319,8 @@ export const Editor = () => {
         window.alert(inputType + ' is not supported');
         return;
     }
-    console.log(op);
     setText(e.currentTarget.value);
-    oldTextRef.current = e.currentTarget.value;
+    oldContentRef.current = e.currentTarget.value;
     if (op.length > 0) {
       const newLog: LoggedOperation = {
         id: Math.random().toString(36).substring(2, 9),
@@ -193,7 +329,26 @@ export const Editor = () => {
         op,
       };
       setOpHistories((prev) => [newLog, ...prev].slice(0, 100));
+
+      if (outstandingRef.current === null) {
+        outstandingRef.current = op;
+        sendOp(revisionRef.current, op);
+      } else {
+        if (bufferRef.current === null) {
+          bufferRef.current = op;
+        } else {
+          bufferRef.current = [...bufferRef.current, ...op];
+        }
+      }
     }
+    updatePresence(currentCursor);
+  };
+
+  const handleSelectionChange = (
+    e: React.SyntheticEvent<HTMLTextAreaElement>,
+  ) => {
+    const textarea = e.currentTarget;
+    updatePresence(textarea.selectionStart);
   };
 
   return (
@@ -201,23 +356,53 @@ export const Editor = () => {
       <Sidebar />
 
       <main className="flex-1 p-6 overflow-y-auto flex flex-col md:flex-row space-y-6 md:space-y-0 md:space-x-6 bg-slate-100">
-        <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col p-8 min-h-[500px]">
+        <div className="flex-1 bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col p-8 min-h-[500px] relative overflow-hidden">
           <textarea
             ref={textareaRef}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
+            onSelect={handleSelectionChange}
+            onKeyUp={handleSelectionChange}
+            onMouseUp={handleSelectionChange}
+            onScroll={updateRemoteCursorCoordinates}
             value={text}
             className="w-full flex-1 resize-none outline-none border-none font-mono text-base text-slate-800 leading-relaxed placeholder-slate-300"
             placeholder="Start typing your collaborative masterpiece here..."
             spellCheck={false}
           />
+
+          {remoteCursors.map((cursor) => (
+            <div
+              key={cursor.clientId}
+              style={{
+                position: 'absolute',
+                top: `${cursor.top + 32}px`,
+                left: `${cursor.left + 32}px`,
+                pointerEvents: 'none',
+                zIndex: 10,
+              }}
+              className="transition-all duration-75"
+            >
+              <div
+                style={{ backgroundColor: cursor.color }}
+                className="w-[2px] h-[1.2em] relative"
+              >
+                <div
+                  style={{ backgroundColor: cursor.color }}
+                  className="absolute bottom-full left-0 px-1.5 py-0.5 rounded-tr rounded-br rounded-bl text-[10px] text-white font-bold whitespace-nowrap shadow-sm select-none"
+                >
+                  {cursor.username}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
 
         <section className="w-full md:w-96 bg-white border border-slate-200 rounded-xl p-5 flex flex-col shadow-sm max-h-[600px] overflow-hidden">
           <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center">
               <span className="h-2 w-2 rounded-full bg-blue-500 mr-2 animate-pulse" />
-              OT Operations
+              My Operations
             </h2>
           </div>
 
@@ -269,4 +454,4 @@ export const Editor = () => {
       </main>
     </div>
   );
-};
+};;
