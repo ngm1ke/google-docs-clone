@@ -1,6 +1,7 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { useSocket } from '../hooks/useSocket';
+import { useDebounce } from '../hooks/useDebounce';
 import type { OTOperation } from '../types';
 import {
   applyAll,
@@ -38,6 +39,7 @@ export const Editor = () => {
   const revisionRef = useRef<number>(0);
   const outstandingRef = useRef<OTOperation[] | null>(null);
   const bufferRef = useRef<OTOperation[] | null>(null);
+  const pendingOpsRef = useRef<OTOperation[]>([]);
 
   const [remoteCursors, setRemoteCursors] = useState<
     {
@@ -170,6 +172,26 @@ export const Editor = () => {
       setOnOpReceived(null);
     };
   }, [session, setOnAckReceived, setOnOpReceived, sendOp]);
+
+  const flushOps = useCallback(() => {
+    if (pendingOpsRef.current.length === 0) return;
+    const ops = pendingOpsRef.current;
+    pendingOpsRef.current = [];
+
+    if (outstandingRef.current === null) {
+      outstandingRef.current = ops;
+      sendOp(revisionRef.current, ops);
+    } else {
+      if (bufferRef.current === null) {
+        bufferRef.current = ops;
+      } else {
+        bufferRef.current = [...bufferRef.current, ...ops];
+      }
+    }
+  }, [sendOp]);
+
+  const debouncedFlush = useDebounce(flushOps, 300);
+  const debouncedUpdatePresence = useDebounce(updatePresence, 300);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const textarea = e.currentTarget;
@@ -330,25 +352,17 @@ export const Editor = () => {
       };
       setOpHistories((prev) => [newLog, ...prev].slice(0, 100));
 
-      if (outstandingRef.current === null) {
-        outstandingRef.current = op;
-        sendOp(revisionRef.current, op);
-      } else {
-        if (bufferRef.current === null) {
-          bufferRef.current = op;
-        } else {
-          bufferRef.current = [...bufferRef.current, ...op];
-        }
-      }
+      pendingOpsRef.current = [...pendingOpsRef.current, ...op];
+      debouncedFlush();
     }
-    updatePresence(currentCursor);
+    debouncedUpdatePresence(currentCursor);
   };
 
   const handleSelectionChange = (
     e: React.SyntheticEvent<HTMLTextAreaElement>,
   ) => {
     const textarea = e.currentTarget;
-    updatePresence(textarea.selectionStart);
+    debouncedUpdatePresence(textarea.selectionStart);
   };
 
   return (
