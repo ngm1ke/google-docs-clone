@@ -1,15 +1,10 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState } from 'react';
 import { Sidebar } from '../components/Sidebar';
 import { useSocket } from '../hooks/useSocket';
+import { useOTSync } from '../hooks/useOTSync';
+import { useRemoteCursors } from '../hooks/useRemoteCursors';
 import { useDebounce } from '../hooks/useDebounce';
 import type { OTOperation } from '../types';
-import {
-  applyAll,
-  transformLists,
-  adjustCursor,
-  getCaretCoordinates,
-} from '../utils/ot';
-import { getAvatarColor } from '../utils';
 
 interface LoggedOperation {
   id: string;
@@ -30,167 +25,25 @@ export const Editor = () => {
     text,
     setText,
   } = useSocket();
+
+  const { textareaRef, oldTextRef, pendingOpsRef, debouncedFlush } = useOTSync(
+    document,
+    session,
+    sendOp,
+    setOnAckReceived,
+    setOnOpReceived,
+    setText,
+  );
+
+  const { remoteCursors, updateRemoteCursorCoordinates } = useRemoteCursors(
+    presences,
+    session,
+    text,
+    textareaRef,
+  );
+
   const [opHistories, setOpHistories] = useState<LoggedOperation[]>([]);
-  const textareaRef = useRef<null | HTMLTextAreaElement>(null);
-  const oldContentRef = useRef<string>('');
-
-  const initializedRef = useRef(false);
-
-  const revisionRef = useRef<number>(0);
-  const outstandingRef = useRef<OTOperation[] | null>(null);
-  const bufferRef = useRef<OTOperation[] | null>(null);
-  const pendingOpsRef = useRef<OTOperation[]>([]);
-
-  const [remoteCursors, setRemoteCursors] = useState<
-    {
-      clientId: string;
-      username: string;
-      top: number;
-      left: number;
-      color: string;
-    }[]
-  >([]);
-
-  const updateRemoteCursorCoordinates = () => {
-    const textarea = textareaRef.current;
-    if (!textarea || !session) return;
-
-    const coords = presences
-      .filter((p) => p.clientId !== session.clientId)
-      .map((p) => {
-        const pos = Math.max(0, Math.min(p.position, textarea.value.length));
-        try {
-          const { top, left } = getCaretCoordinates(textarea, pos);
-          return {
-            clientId: p.clientId,
-            username: p.username,
-            top,
-            left,
-            color: getAvatarColor(p.clientId),
-          };
-        } catch (e) {
-          console.error('Error computing cursor:', e);
-          return null;
-        }
-      })
-      .filter((c): c is NonNullable<typeof c> => c !== null);
-
-    setRemoteCursors(coords);
-  };
-
-  useEffect(() => {
-    updateRemoteCursorCoordinates();
-  }, [presences, text]);
-
-  useEffect(() => {
-    if (document && !initializedRef.current) {
-      oldContentRef.current = document.content;
-      revisionRef.current = document.revision;
-      initializedRef.current = true;
-    }
-  }, [document]);
-
-  useEffect(() => {
-    window.addEventListener('resize', updateRemoteCursorCoordinates);
-    return () => {
-      window.removeEventListener('resize', updateRemoteCursorCoordinates);
-    };
-  }, [presences, text]);
-
-  // Store selection state before change occurs
   const selectionBeforeChange = useRef({ start: 0, end: 0 });
-
-  useEffect(() => {
-    if (!session) return;
-
-    setOnAckReceived((data) => {
-      console.log('Received ACK for version:', data.version);
-      revisionRef.current = data.version;
-      outstandingRef.current = null;
-
-      if (bufferRef.current) {
-        outstandingRef.current = bufferRef.current;
-        bufferRef.current = null;
-        sendOp(revisionRef.current, outstandingRef.current);
-      }
-    });
-
-    setOnOpReceived((data) => {
-      if (data.clientId === session.clientId) {
-        return;
-      }
-
-      console.log('Received remote operation:', data);
-
-      let transformedRemote = [...data.operations];
-
-      if (outstandingRef.current) {
-        const [tRemote, tOutstanding] = transformLists(
-          transformedRemote,
-          outstandingRef.current,
-          data.clientId,
-          session.clientId,
-        );
-        transformedRemote = tRemote;
-        outstandingRef.current = tOutstanding;
-      }
-
-      if (bufferRef.current) {
-        const [tRemote, tBuffer] = transformLists(
-          transformedRemote,
-          bufferRef.current,
-          data.clientId,
-          session.clientId,
-        );
-        transformedRemote = tRemote;
-        bufferRef.current = tBuffer;
-      }
-
-      const textarea = textareaRef.current;
-      if (textarea) {
-        const cursorStart = textarea.selectionStart;
-        const cursorEnd = textarea.selectionEnd;
-
-        const newText = applyAll(oldContentRef.current, transformedRemote);
-        const newCursorStart = adjustCursor(cursorStart, transformedRemote);
-        const newCursorEnd = adjustCursor(cursorEnd, transformedRemote);
-
-        setText(newText);
-        oldContentRef.current = newText;
-        textarea.setSelectionRange(newCursorStart, newCursorEnd);
-      } else {
-        const newText = applyAll(oldContentRef.current, transformedRemote);
-        setText(newText);
-        oldContentRef.current = newText;
-      }
-
-      revisionRef.current = data.version;
-    });
-
-    return () => {
-      setOnAckReceived(null);
-      setOnOpReceived(null);
-    };
-  }, [session, setOnAckReceived, setOnOpReceived, sendOp]);
-
-  const flushOps = useCallback(() => {
-    if (pendingOpsRef.current.length === 0) return;
-    const ops = pendingOpsRef.current;
-    pendingOpsRef.current = [];
-
-    if (outstandingRef.current === null) {
-      outstandingRef.current = ops;
-      sendOp(revisionRef.current, ops);
-    } else {
-      if (bufferRef.current === null) {
-        bufferRef.current = ops;
-      } else {
-        bufferRef.current = [...bufferRef.current, ...ops];
-      }
-    }
-  }, [sendOp]);
-
-  const debouncedFlush = useDebounce(flushOps, 300);
   const debouncedUpdatePresence = useDebounce(updatePresence, 300);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -208,24 +61,12 @@ export const Editor = () => {
     const newText = textarea.value;
     const currentCursor = textarea.selectionStart;
     const inputType = nativeEvent.inputType;
-    const oldText = oldContentRef.current;
+    const oldText = oldTextRef.current;
 
     const { start: startSelection, end: endSelection } =
       selectionBeforeChange.current;
     const isSelection = startSelection != endSelection;
-    const deletedTextWhenSelection = oldText.slice(
-      startSelection,
-      endSelection,
-    );
 
-    console.log({
-      newValue: newText,
-      currentCursor,
-      inputType,
-      oldText,
-      isSelection,
-      deletedTextWhenSelection,
-    });
     let op: OTOperation[] = [];
     switch (inputType) {
       case 'insertText': {
@@ -237,22 +78,13 @@ export const Editor = () => {
               position: startSelection,
               length: endSelection - startSelection,
             },
-            {
-              type: 'insert',
-              position: currentCursor - 1,
-              text: addedText,
-            },
+            { type: 'insert', position: currentCursor - 1, text: addedText },
           ];
         } else {
           op = [
-            {
-              type: 'insert',
-              position: currentCursor - 1,
-              text: addedText,
-            },
+            { type: 'insert', position: currentCursor - 1, text: addedText },
           ];
         }
-
         break;
       }
       case 'insertLineBreak': {
@@ -264,19 +96,11 @@ export const Editor = () => {
               position: startSelection,
               length: endSelection - startSelection,
             },
-            {
-              type: 'insert',
-              position: currentCursor - 1,
-              text: addedText,
-            },
+            { type: 'insert', position: currentCursor - 1, text: addedText },
           ];
         } else {
           op = [
-            {
-              type: 'insert',
-              position: currentCursor - 1,
-              text: addedText,
-            },
+            { type: 'insert', position: currentCursor - 1, text: addedText },
           ];
         }
         break;
@@ -309,7 +133,6 @@ export const Editor = () => {
             },
           ];
         }
-
         break;
       }
       case 'deleteContentBackward': {
@@ -322,27 +145,22 @@ export const Editor = () => {
             },
           ];
         } else {
-          op = [
-            {
-              type: 'delete',
-              position: currentCursor + 1,
-              length: 1,
-            },
-          ];
+          op = [{ type: 'delete', position: currentCursor + 1, length: 1 }];
         }
-
         break;
       }
-      case 'historyUndo': {
-        window.alert(inputType + ' is not supported');
-        break;
-      }
-      default:
-        window.alert(inputType + ' is not supported');
+      case 'historyUndo':
+        window.alert(`${inputType} is not supported`);
         return;
+      default: {
+        window.alert(`${inputType} is not supported`);
+        return;
+      }
     }
+
     setText(e.currentTarget.value);
-    oldContentRef.current = e.currentTarget.value;
+    oldTextRef.current = e.currentTarget.value;
+
     if (op.length > 0) {
       const newLog: LoggedOperation = {
         id: Math.random().toString(36).substring(2, 9),
@@ -355,14 +173,14 @@ export const Editor = () => {
       pendingOpsRef.current = [...pendingOpsRef.current, ...op];
       debouncedFlush();
     }
+
     debouncedUpdatePresence(currentCursor);
   };
 
   const handleSelectionChange = (
     e: React.SyntheticEvent<HTMLTextAreaElement>,
   ) => {
-    const textarea = e.currentTarget;
-    debouncedUpdatePresence(textarea.selectionStart);
+    debouncedUpdatePresence(e.currentTarget.selectionStart);
   };
 
   return (
@@ -411,7 +229,7 @@ export const Editor = () => {
             </div>
           ))}
         </div>
-
+        {/* 
         <section className="w-full md:w-96 bg-white border border-slate-200 rounded-xl p-5 flex flex-col shadow-sm max-h-[600px] overflow-hidden">
           <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
             <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider flex items-center">
@@ -465,7 +283,8 @@ export const Editor = () => {
             )}
           </div>
         </section>
+         */}
       </main>
     </div>
   );
-};;
+};
